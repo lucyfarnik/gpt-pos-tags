@@ -3,6 +3,7 @@ import torch as t
 import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import TensorDataset, DataLoader
+from sklearn.utils import resample
 from sklearn.model_selection import train_test_split
 import os
 from typing import Tuple, Optional
@@ -66,6 +67,15 @@ def gather_activations(data, activation_name: str, layer: int) -> Tuple[DataLoad
                t.stack(adj_activations), t.stack(other_activations)])
     y = t.cat([t.zeros(len(noun_activations)), t.ones(len(verb_activations)),
                t.zeros(len(adj_activations)), t.zeros(len(other_activations))])
+    
+    # this dataset is imbalanced (only about 10% is labeled 1), so let's downsample the 0s
+    X_0 = X[y == 0]
+    X_1 = X[y == 1]
+    y_0 = y[y == 0]
+    y_1 = y[y == 1]
+    X_0, y_0 = resample(X_0, y_0, n_samples=len(X_1), replace=False)
+    X = t.cat([X_0, X_1])
+    y = t.cat([y_0, y_1])
     
     # split into train and test
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
