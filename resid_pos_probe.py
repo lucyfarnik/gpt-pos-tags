@@ -5,7 +5,7 @@ from torch.optim import Adam
 from torch.utils.data import TensorDataset, DataLoader
 from sklearn.model_selection import train_test_split
 import os
-from typing import Tuple
+from typing import Tuple, Optional
 from gather_heads_pos import model, childrens_tagged_sents, reconstruct_sentence, get_pos_dict
 
 MAIN = __name__ == '__main__'
@@ -39,16 +39,6 @@ if MAIN:
             })
 
         t.save(data, filename)
-
-#%%
-# define the linear classifier
-class LinearClassifier(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.linear = nn.Linear(768, 2)
-
-    def forward(self, x):
-        return self.linear(x)
 
 #%%
 # gather the activations for different POS tags together
@@ -87,13 +77,15 @@ def gather_activations(data, activation_name: str, layer: int) -> Tuple[DataLoad
     return train_loader, test_loader
 
 #%%
-def train_and_test_cls(data, activation_name: str, layer: int):
+def train_and_test_cls(data, activation_name: str, layer: int,
+                       cls: Optional[nn.Module] = None):
     print()
-    print('Training and testing linear classifier for', activation_name, layer)
+    print('Training and testing classifier for', activation_name, layer)
     train_loader, test_loader = gather_activations(data, activation_name, layer)
 
     # define the linear classifier
-    cls = LinearClassifier()
+    if cls is None:
+        cls = nn.Sequential(nn.Linear(768, 2))
     criterion = nn.CrossEntropyLoss()
     optimizer = Adam(cls.parameters(), lr=0.001)
 
@@ -119,8 +111,41 @@ def train_and_test_cls(data, activation_name: str, layer: int):
             correct += (predicted == y).sum().item()
     print(f'Accuracy of the network on the {total:,} test set: {100 * correct / total:.2f}%')
 # %%
-if MAIN:
+def test_classifier(cls: Optional[nn.Module] = None):
     for layer in layers:
         for activation_name in activation_names:
-            train_and_test_cls(data, activation_name, layer)
+            train_and_test_cls(data, activation_name, layer, cls)
+#%%
+if MAIN:
+    test_classifier()
+# %%
+# try different kinds of classifiers - no bias
+if MAIN:
+    print('Linear classifier with no bias')
+    test_classifier(nn.Sequential(nn.Linear(768, 2, bias=False)))
+# %%
+# measure cosine similarity, then do a sigmoid for classification
+class CosineClassifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(t.randn(768))
+
+    def forward(self, x):
+        logit = t.sigmoid(t.cosine_similarity(x, self.weight.unsqueeze(0), dim=1))
+        return t.stack([1 - logit, logit], dim=1)
+
+if MAIN:
+    print('Cosine similarity with sigmoid')
+    cls = CosineClassifier()
+    test_classifier(cls)
+#%%
+# train the cosine classifier on resid_pre 0 and save its weights
+if MAIN:
+    cls = CosineClassifier()
+    train_and_test_cls(data, 'resid_pre', 0, cls)
+    global verb_direction
+    verb_direction = cls.weight.clone().detach()
+    print(verb_direction)
+# %%
+t.save(verb_direction, 'verb_direction.pt')
 # %%
